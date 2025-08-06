@@ -83,14 +83,31 @@ export const updateInvestmentIntoDB = async (
     let updatedAmountRequired: number | undefined;
 
     // Handle amountRequired update
-    if (payload.amountRequired) {
-      const previousAmount = investment.amountRequired;
-      updatedAmountRequired = Number(
-        (previousAmount + payload.amountRequired).toFixed(2)
-      );
-      updates.amountRequired = updatedAmountRequired;
-      logMessage = `Investment Raised capital`;
-    }
+    // if (payload.amountRequired) {
+    //   const previousAmount = investment.amountRequired;
+    //   updatedAmountRequired = Number(
+    //     (previousAmount + payload.amountRequired).toFixed(2)
+    //   );
+    //   updates.amountRequired = updatedAmountRequired;
+    //   logMessage = `Investment Raised capital`;
+    // }
+
+    if (
+  payload.amountRequired !== undefined &&
+  !payload.saleAmount
+) {
+  if (payload.isCapitalRaise) {
+    const previousAmount = investment.amountRequired;
+    updatedAmountRequired = Number(
+      (Number(previousAmount) + Number(payload.amountRequired)).toFixed(2)
+    );
+    updates.amountRequired = updatedAmountRequired;
+    logMessage = `Investment Raised capital`;
+  } else {
+    updates.amountRequired = payload.amountRequired;
+  }
+}
+
 
     // Handle saleAmount and profit distribution
     if (payload.saleAmount) {

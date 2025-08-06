@@ -12,7 +12,7 @@ const investmentSchema = new Schema(
 
     saleAmount: { type: Number },
     adminCost: { type: Number },
-
+    isCapitalRaise:{type: Boolean, default: false},
     documents: [{ type: Schema.Types.Mixed }],
 
     status: {

@@ -8,5 +8,6 @@ export interface TInvestment {
   documents: any[];
   status: string;
   amountRequired:Number;
-  adminCost:Number
+  adminCost:Number;
+  isCapitalRaise: boolean;
 }

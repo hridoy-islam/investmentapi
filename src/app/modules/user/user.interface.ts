@@ -53,7 +53,7 @@ export interface TUser {
   isValided: boolean;
   isCompleted: boolean;
   userAgentInfo: UserAgentInfo[];
-
+dateOfBirth?: Date;
   agent: Types.ObjectId;
   passport: String[];
   proofOfAddress: String[];
