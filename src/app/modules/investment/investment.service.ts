@@ -117,7 +117,7 @@ export const updateInvestmentIntoDB = async (
 
       const adminCostRate = investment.adminCost || 0;
       const adminCost = Number(
-        (grossProfit * (adminCostRate / 100)).toFixed(2)
+        (grossProfit * (adminCostRate as any / 100)).toFixed(2)
       );
       const netProfit = Number((grossProfit - adminCost).toFixed(2));
 
@@ -522,8 +522,8 @@ export const updateInvestmentIntoDB = async (
       "documents",
     ];
     for (const field of updatableFields) {
-      if (field in payload && payload[field] !== undefined) {
-        updates[field] = payload[field];
+      if (field in payload && (payload as any)[field] !== undefined) {
+        (updates as any)[field] = (payload as any)[field];
       }
     }
 

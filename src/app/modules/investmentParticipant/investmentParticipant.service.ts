@@ -171,7 +171,7 @@ const updateInvestmentParticipantIntoDB = async (
 
   // Round payload.amount if present
   if (hasAmount) {
-    payload.amount = Math.round(payload.amount * 100) / 100;
+    payload.amount = Math.round((payload as any)?.amount * 100) / 100;
   }
 
   // Guard: Check if adding amount would exceed project's amountRequired
@@ -194,7 +194,7 @@ const updateInvestmentParticipantIntoDB = async (
 
     const participantCurrentAmount = investmentParticipant.amount;
     const newTotalInvested =
-      currentTotalInvested - participantCurrentAmount + payload.amount;
+      currentTotalInvested - participantCurrentAmount + (payload as any).amount;
 
     if (newTotalInvested > Number(investment.amountRequired)) {
       throw new AppError(
