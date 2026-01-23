@@ -16,7 +16,8 @@ const investmentParticipantSchema = new Schema(
       default: "active",
     },
     amountLastUpdatedAt: { type: Date, default: null },
-   
+       projectShare: { type: Number, default: 0 },
+
   },
   { timestamps: true }
 );

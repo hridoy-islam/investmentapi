@@ -7,22 +7,20 @@ const investmentSchema = new Schema(
     title: { type: String, required: true },
     image: { type: String },
     details: { type: String, required: true },
-
-    amountRequired: { type: Number, required: true,default:0 }, // Keep this only ✅
-
+    action: { typr: String },
+    amountRequired: { type: Number, required: true, default: 0 },
+    investmentAmount: { type: Number, required: true, default: 0 },
     saleAmount: { type: Number },
     adminCost: { type: Number },
-    isCapitalRaise:{type: Boolean, default: false},
+    isCapitalRaise: { type: Boolean, default: false },
     documents: [{ type: Schema.Types.Mixed }],
-
     status: {
       type: String,
-      enum: ["active","block"],
+      enum: ["active", "block"],
       default: "active",
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
-
 
 export const Investment = model<TInvestment>("Investment", investmentSchema);

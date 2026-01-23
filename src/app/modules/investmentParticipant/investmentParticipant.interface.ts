@@ -12,5 +12,7 @@ export interface TInvestmentParticipant {
   totalPaid: number;
   createdAt?: Date;
   updatedAt?: Date;
-  agentCommissionRate:Number
+  agentCommissionRate:Number;
+    projectShare: Number;
+
 }

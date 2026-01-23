@@ -7,6 +7,8 @@ export interface TInvestment {
   details: string;
   documents: any[];
   status: string;
+  action: string;
+  investmentAmount:Number;
   amountRequired:Number;
   adminCost:Number;
   isCapitalRaise: boolean;
