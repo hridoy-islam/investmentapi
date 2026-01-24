@@ -10,6 +10,7 @@ import { Transaction } from "../transactions/transactions.model";
 import { Investment } from "../investment/investment.model";
 import mongoose from "mongoose";
 import { User } from "../user/user.model";
+import { currency } from "../types/currency";
 
 const createInvestmentParticipantIntoDB = async (
   payload: TInvestmentParticipant
@@ -55,7 +56,7 @@ const createInvestmentParticipantIntoDB = async (
     if (amount > remainingAmount) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Only £${remainingAmount} left to invest in this project`
+        `Only amount ${remainingAmount} left to invest in this project`
       );
     }
 
@@ -390,7 +391,8 @@ export const updateInvestmentParticipantIntoDB = async (
   if (!investment) {
     throw new AppError(httpStatus.NOT_FOUND, "Investment not found");
   }
-
+const currencyType = investment.currencyType || 'GBP';
+const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol || '£';
   const amountRequired = Number(investment.amountRequired);
 
   // Validate if adding this increment would exceed project limit
@@ -409,7 +411,7 @@ export const updateInvestmentParticipantIntoDB = async (
     if (newTotalInvested > amountRequired) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Cannot add £${payload.amount}. It would exceed the project limit of £${amountRequired}. Current total: £${currentTotalInvested}`
+        `Cannot add ${currencySymbol}${payload.amount}. It would exceed the project limit of ${currencySymbol}${amountRequired}. Current total: £${currentTotalInvested}`
       );
     }
   }

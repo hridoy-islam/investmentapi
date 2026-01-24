@@ -7,6 +7,7 @@ const investmentSchema = new Schema(
     title: { type: String, required: true },
     image: { type: String },
     details: { type: String, required: true },
+    currencyType: { type: String, required: true,default:"GBP" },
     action: { typr: String },
     amountRequired: { type: Number, required: true, default: 0 },
     investmentAmount: { type: Number, required: true, default: 0 },

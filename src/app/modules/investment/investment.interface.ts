@@ -8,6 +8,7 @@ export interface TInvestment {
   documents: any[];
   status: string;
   action: string;
+  currencyType: string;
   investmentAmount:Number;
   amountRequired:Number;
   adminCost:Number;

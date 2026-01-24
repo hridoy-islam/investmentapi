@@ -13,6 +13,7 @@ import { User } from "../user/user.model";
 import mongoose from "mongoose";
 import { AgentCommission } from "../agent-commission/agent-commission.model";
 import { AgentTransaction } from "../agent-transactions/agent-transactions.model";
+import { currency } from "../types/currency";
 
 const createInvestmentIntoDB = async (payload: TInvestment) => {
   try {
@@ -556,7 +557,8 @@ export const updateInvestmentIntoDB = async (
     if (!investment) {
       throw new AppError(httpStatus.NOT_FOUND, "Investment not found");
     }
-
+const currencyType = investment.currencyType || 'GBP';
+const currencySymbol = currency[currencyType as keyof typeof currency ]?.symbol || '£';
     if (payload?.saleAmount && isNaN(payload.saleAmount)) {
       throw new AppError(httpStatus.BAD_REQUEST, "Invalid saleAmount");
     }
@@ -566,7 +568,7 @@ export const updateInvestmentIntoDB = async (
       const updates: Partial<TInvestment> = {};
       
       // Only update these specific fields
-      const detailFields = ["title", "adminCost", "details", "documents", "image"];
+      const detailFields = ["title", "adminCost", "details", "documents", "image","currencyType"];
       
       for (const field of detailFields) {
         if (field in payload && (payload as any)[field] !== undefined) {
@@ -620,7 +622,7 @@ export const updateInvestmentIntoDB = async (
               if (participant.amount > 0) {
                 // Formula: (Invested Amount / New Total Required) * 100
                 participant.projectShare = Number(
-                  ((participant.amount / updatedAmountRequired!) * 100).toFixed(4)
+                  ((participant.amount / updatedAmountRequired!) * 100).toFixed(2)
                 );
                 return participant.save({ session });
               }
@@ -721,6 +723,7 @@ export const updateInvestmentIntoDB = async (
           amount: adminCost,
           cmv: saleAmount,
           refId: savedGrossProfitLog._id,
+          currencyType
         },
         createdAt: new Date(now.getTime() + 3),
       };
@@ -740,6 +743,7 @@ export const updateInvestmentIntoDB = async (
         metadata: {
           amount: netProfit,
           refId: savedAdminCostLog._id,
+          currencyType
         },
         createdAt: new Date(now.getTime() + 4),
       };
@@ -811,7 +815,7 @@ export const updateInvestmentIntoDB = async (
         // 4. Create Investor Transaction Log
         const profitLog = {
           type: "profitDistributed",
-          message: `Profit Distributed to ${investorName} for ${investorSharePercent}% share` + (agentCommission > 0 ? ` (after ${agentCommission} agent comm.)` : ""),
+          message: `Profit Distributed to ${investorName} for ${investorSharePercent}% share` + (agentCommission > 0 ? ` (after agent comm.)` : ""),
           metadata: {
             netProfit, // Total net profit of the deal
             amount: finalInvestorProfit, // What the investor actually got
@@ -820,6 +824,7 @@ export const updateInvestmentIntoDB = async (
             sharePercentage: investorSharePercent,
             investorName,
             refId: savedNetProfitLog._id,
+            currencyType
           },
           createdAt: new Date(),
         };
@@ -869,6 +874,7 @@ export const updateInvestmentIntoDB = async (
               investmentId: id,
               investmentName: investment.title,
               refId: savedNetProfitLog._id,
+              currencyType
             },
             createdAt: new Date(),
           };
@@ -992,6 +998,7 @@ export const updateInvestmentIntoDB = async (
       "title",
       "image",
       "documents",
+      "currencyType"
     ];
     for (const field of updatableFields) {
       if (field in payload && (payload as any)[field] !== undefined) {
