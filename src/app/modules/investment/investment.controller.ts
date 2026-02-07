@@ -44,10 +44,27 @@ const updateInvestment = catchAsync(async (req, res) => {
     data: result,
   });
 });
+const addInstallment = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const { participantId, amount } = req.body;
 
+  const result = await InvestmentServices.addInstallment({
+    investmentId: id,
+    participantId,
+    amount,
+  });
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Installment recorded successfully",
+    data: result,
+  });
+});
 export const InvestmentControllers = {
   getAllInvestment,
   getSingleInvestment,
   updateInvestment,
   InvestmentCreate,
+  addInstallment
 };

@@ -14,5 +14,7 @@ export interface TInvestmentParticipant {
   updatedAt?: Date;
   agentCommissionRate:Number;
     projectShare: Number;
+     installmentNumber: number;
+  installmentPaidAmount: number;
 
 }

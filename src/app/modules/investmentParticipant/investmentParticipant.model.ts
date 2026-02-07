@@ -12,17 +12,18 @@ const investmentParticipantSchema = new Schema(
     agentCommissionRate: { type: Number, default: 0 },
     status: {
       type: String,
-      enum: ["active", "block"], 
+      enum: ["active", "block"],
       default: "active",
     },
     amountLastUpdatedAt: { type: Date, default: null },
-       projectShare: { type: Number, default: 0 },
-
+    projectShare: { type: Number, default: 0 },
+    installmentNumber: { type: Number, default: 0 },
+    installmentPaidAmount: { type: Number, default: 0 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const InvestmentParticipant = model(
   "InvestmentParticipant",
-  investmentParticipantSchema
+  investmentParticipantSchema,
 );

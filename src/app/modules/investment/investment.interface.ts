@@ -9,8 +9,11 @@ export interface TInvestment {
   status: string;
   action: string;
   currencyType: string;
-  investmentAmount:Number;
-  amountRequired:Number;
-  adminCost:Number;
+  projectAmount: Number;
+  paidAmount: Number;
+  adminCost: Number;
   isCapitalRaise: boolean;
+  projectDuration: number;
+  installmentNumber: number;
+  totalAmountPaid: number;
 }

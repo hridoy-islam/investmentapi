@@ -30,4 +30,10 @@ router.patch(
   InvestmentControllers.updateInvestment
 );
 
+router.post(
+  "/:id/installment",
+  auth("admin", "agent"),
+  InvestmentControllers.addInstallment
+);
+
 export const InvestmentRoutes = router;

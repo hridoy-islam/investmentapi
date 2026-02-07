@@ -39,6 +39,7 @@ export const TransactionLogSchema = new Schema(
         "commissionPaymentMade",
         "grossProfit",
         "netProfit",
+        "installment"
       ],
       required: true,
     },

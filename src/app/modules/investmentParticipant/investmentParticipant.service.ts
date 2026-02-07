@@ -13,7 +13,7 @@ import { User } from "../user/user.model";
 import { currency } from "../types/currency";
 
 const createInvestmentParticipantIntoDB = async (
-  payload: TInvestmentParticipant
+  payload: TInvestmentParticipant,
 ) => {
   try {
     const { investorId, investmentId, amount, agentCommissionRate } = payload;
@@ -50,13 +50,13 @@ const createInvestmentParticipantIntoDB = async (
 
     const totalInvestedSoFar = aggregation[0]?.totalInvested || 0;
     const remainingAmount =
-      Number(investment.amountRequired) - totalInvestedSoFar;
+      Number(investment.projectAmount) - totalInvestedSoFar;
 
     // ✅ Guard: Prevent over-investment
     if (amount > remainingAmount) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Only amount ${remainingAmount} left to invest in this project`
+        `Only amount ${remainingAmount} left to invest in this project`,
       );
     }
 
@@ -92,7 +92,7 @@ const createInvestmentParticipantIntoDB = async (
             dueAmount: amount,
             paidAmount: 0,
             status: "due",
-            note: `Initial investment added.`,
+            note: `${investor.name} as investor has been added`,
             metadata: {
               investorId,
               investmentId,
@@ -120,19 +120,19 @@ const createInvestmentParticipantIntoDB = async (
 
     throw new AppError(
       httpStatus.INTERNAL_SERVER_ERROR,
-      error.message || "Failed to create or update InvestmentParticipant"
+      error.message || "Failed to create or update InvestmentParticipant",
     );
   }
 };
 
 const getAllInvestmentParticipantFromDB = async (
-  query: Record<string, unknown>
+  query: Record<string, unknown>,
 ) => {
   const InvestmentParticipantQuery = new QueryBuilder(
     InvestmentParticipant.find()
       .populate("investorId")
       .populate("investmentId"), // Ensure this populates the full Investment document
-    query
+    query,
   )
     .search(InvestmentParticipantSearchableFields)
     .filter(query)
@@ -148,28 +148,30 @@ const getAllInvestmentParticipantFromDB = async (
   for (const participant of result) {
     // 1. Check if share needs updating
     if (!participant.projectShare || participant.projectShare === 0) {
-      
       // 2. SAFETY CHECK: Ensure we actually have the data needed to calculate
       // (participant.investmentId might not be populated if specific fields were requested)
       const investment = participant.investmentId as any;
-      
+
       if (
-        investment && 
-        typeof investment.amountRequired === 'number' && 
-        investment.amountRequired > 0 && 
-        typeof participant.amount === 'number' && 
+        investment &&
+        typeof investment.projectAmount === "number" &&
+        investment.projectAmount > 0 &&
+        typeof participant.amount === "number" &&
         participant.amount > 0
       ) {
-        
         // 3. Calculate share based on CURRENT valuation (This becomes the "locked" value)
         const calculatedShare = Number(
-          ((participant.amount / investment.amountRequired) * 100).toFixed(2)
+          ((participant.amount / investment.projectAmount) * 100).toFixed(2),
         );
 
         participant.projectShare = calculatedShare;
 
         updates.push(
-          InvestmentParticipant.findByIdAndUpdate((participant as any)._id, { projectShare: calculatedShare }, { new: true })
+          InvestmentParticipant.findByIdAndUpdate(
+            (participant as any)._id,
+            { projectShare: calculatedShare },
+            { new: true },
+          ),
         );
       }
     }
@@ -220,7 +222,7 @@ const getSingleInvestmentParticipantFromDB = async (id: string) => {
 //     throw new AppError(httpStatus.NOT_FOUND, "Investment not found");
 //   }
 
-//   // Guard: Check if adding amount would exceed project's amountRequired
+//   // Guard: Check if adding amount would exceed project's projectAmount
 //   if (hasAmount) {
 //     const allParticipants = await InvestmentParticipant.find({
 //       investmentId: investmentParticipant.investmentId,
@@ -235,10 +237,10 @@ const getSingleInvestmentParticipantFromDB = async (id: string) => {
 //     const newTotalInvested =
 //       currentTotalInvested - participantCurrentAmount + (payload as any).amount;
 
-//     if (newTotalInvested > Number(investment.amountRequired)) {
+//     if (newTotalInvested > Number(investment.projectAmount)) {
 //       throw new AppError(
 //         httpStatus.BAD_REQUEST,
-//         `Cannot invest £${payload.amount}. It would exceed the required £${investment.amountRequired}. Current invested: £${currentTotalInvested}`
+//         `Cannot invest £${payload.amount}. It would exceed the required £${investment.projectAmount}. Current invested: £${currentTotalInvested}`
 //       );
 //     }
 //   }
@@ -252,9 +254,9 @@ const getSingleInvestmentParticipantFromDB = async (id: string) => {
 
 //     // ✅ NEW LOGIC: Recalculate Project Share based on CURRENT Amount Required
 //     // This locks the percentage based on the investment size AT THE TIME of adding funds.
-//     if (Number(investment.amountRequired) > 0) {
+//     if (Number(investment.projectAmount) > 0) {
 //       investmentParticipant.projectShare = Number(
-//         ((investmentParticipant.amount / Number(investment.amountRequired)) * 100).toFixed(4) // Using 4 decimals for precision
+//         ((investmentParticipant.amount / Number(investment.projectAmount)) * 100).toFixed(4) // Using 4 decimals for precision
 //       );
 //     }
 //   }
@@ -287,9 +289,9 @@ const getSingleInvestmentParticipantFromDB = async (id: string) => {
 //         paidAmount: 0,
 //         status: "partial",
 //         note: `${investorName} made an additional investment in the project. New Share: ${investmentParticipant.projectShare}%`,
-//         metadata: { 
+//         metadata: {
 //           amount: payload.amount,
-//           newShare: investmentParticipant.projectShare 
+//           newShare: investmentParticipant.projectShare
 //         },
 //       });
 
@@ -367,11 +369,9 @@ const getSingleInvestmentParticipantFromDB = async (id: string) => {
 //   return result;
 // };
 
-
-
 export const updateInvestmentParticipantIntoDB = async (
   id: string,
-  payload: Partial<TInvestmentParticipant>
+  payload: Partial<TInvestmentParticipant>,
 ) => {
   const investmentParticipant = await InvestmentParticipant.findById(id);
   if (!investmentParticipant) {
@@ -387,13 +387,16 @@ export const updateInvestmentParticipantIntoDB = async (
   }
 
   // Fetch Investment
-  const investment = await Investment.findById(investmentParticipant.investmentId);
+  const investment = await Investment.findById(
+    investmentParticipant.investmentId,
+  );
   if (!investment) {
     throw new AppError(httpStatus.NOT_FOUND, "Investment not found");
   }
-const currencyType = investment.currencyType || 'GBP';
-const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol || '£';
-  const amountRequired = Number(investment.amountRequired);
+  const currencyType = investment.currencyType || "GBP";
+  const currencySymbol =
+    currency[currencyType as keyof typeof currency]?.symbol || "£";
+  const projectAmount = Number(investment.projectAmount);
 
   // Validate if adding this increment would exceed project limit
   if (hasAmount) {
@@ -403,15 +406,15 @@ const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol |
 
     const currentTotalInvested = allParticipants.reduce(
       (total, participant) => total + participant.amount,
-      0
+      0,
     );
 
     const newTotalInvested = currentTotalInvested + payload.amount!;
 
-    if (newTotalInvested > amountRequired) {
+    if (newTotalInvested > projectAmount) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Cannot add ${currencySymbol}${payload.amount}. It would exceed the project limit of ${currencySymbol}${amountRequired}. Current total: £${currentTotalInvested}`
+        `Cannot add ${currencySymbol}${payload.amount}. It would exceed the project limit of ${currencySymbol}${projectAmount}. Current total: £${currentTotalInvested}`,
       );
     }
   }
@@ -419,17 +422,16 @@ const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol |
   // Update amounts if payload includes an increment
   if (hasAmount) {
     // Add the increment to existing amount
-    investmentParticipant.amount = Math.round(
-      (investmentParticipant.amount + payload.amount!) * 100
-    ) / 100;
+    investmentParticipant.amount =
+      Math.round((investmentParticipant.amount + payload.amount!) * 100) / 100;
 
-    investmentParticipant.totalDue = Math.round(
-      (investmentParticipant.totalDue + payload.amount!) * 100
-    ) / 100;
+    investmentParticipant.totalDue =
+      Math.round((investmentParticipant.totalDue + payload.amount!) * 100) /
+      100;
 
-    if (amountRequired > 0) {
+    if (projectAmount > 0) {
       investmentParticipant.projectShare = parseFloat(
-        ((investmentParticipant.amount / amountRequired) * 100).toFixed(2)
+        ((investmentParticipant.amount / projectAmount) * 100).toFixed(2),
       );
     }
   }
@@ -503,9 +505,8 @@ const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol |
 
       // Add payout to last transaction
       const lastTx = transactions[transactions.length - 1];
-      lastTx.monthlyTotalPaid = Math.round(
-        (lastTx.monthlyTotalPaid + roundedPaid) * 100
-      ) / 100;
+      lastTx.monthlyTotalPaid =
+        Math.round((lastTx.monthlyTotalPaid + roundedPaid) * 100) / 100;
       lastTx.status = "paid";
 
       lastTx.paymentLog.push({
@@ -527,13 +528,14 @@ const currencySymbol = currency[currencyType as keyof typeof currency]?.symbol |
   }
 
   // Final rounding before save
-  investmentParticipant.amount = Math.round(investmentParticipant.amount * 100) / 100;
-  investmentParticipant.totalDue = Math.round(investmentParticipant.totalDue * 100) / 100;
+  investmentParticipant.amount =
+    Math.round(investmentParticipant.amount * 100) / 100;
+  investmentParticipant.totalDue =
+    Math.round(investmentParticipant.totalDue * 100) / 100;
 
   const result = await investmentParticipant.save();
   return result;
 };
-
 
 export const InvestmentParticipantServices = {
   getAllInvestmentParticipantFromDB,
