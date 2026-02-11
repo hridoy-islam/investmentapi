@@ -695,6 +695,12 @@ export const updateInvestmentIntoDB = async (
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
+      if (!globalTransaction) {
+  throw new AppError(
+    httpStatus.INTERNAL_SERVER_ERROR,
+    "Global transaction not found when adding net profit log"
+  );
+}
       const savedCmvLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
       const grossProfitLog = {
@@ -709,10 +715,22 @@ export const updateInvestmentIntoDB = async (
         },
         createdAt: new Date(now.getTime() + 2),
       };
+      if (!globalTransaction) {
+  throw new AppError(
+    httpStatus.INTERNAL_SERVER_ERROR,
+    "Global transaction not found when adding net profit log"
+  );
+}
       globalTransaction.logs.push(grossProfitLog);
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
+      if (!globalTransaction) {
+  throw new AppError(
+    httpStatus.INTERNAL_SERVER_ERROR,
+    "Global transaction not found when adding net profit log"
+  );
+}
       const savedGrossProfitLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
       const adminCostLog = {
@@ -725,6 +743,12 @@ export const updateInvestmentIntoDB = async (
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
+      if (!globalTransaction) {
+  throw new AppError(
+    httpStatus.INTERNAL_SERVER_ERROR,
+    "Global transaction not found when adding net profit log"
+  );
+}
       const savedAdminCostLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
       // ---------------------------------------------------------
@@ -913,6 +937,12 @@ export const updateInvestmentIntoDB = async (
         },
         createdAt: new Date(now.getTime() + 4),
       };
+      if (!globalTransaction) {
+  throw new AppError(
+    httpStatus.INTERNAL_SERVER_ERROR,
+    "Global transaction not found when adding net profit log"
+  );
+}
       
       globalTransaction.logs.push(netProfitLog);
       await globalTransaction.save({ session });
