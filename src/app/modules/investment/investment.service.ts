@@ -624,54 +624,43 @@ export const updateInvestmentIntoDB = async (
     }
 
     // --- Logic 2: Handle saleAmount and profit distribution ---
-    if (payload.saleAmount) {
+  if (payload.saleAmount) {
       // 1. Fetch participants
       const participants = await InvestmentParticipant.find({
         investmentId: id,
         status: "active",
       }).session(session);
 
-      // 2. Calculate Total Due and Total Paid from Participants
+      // 2. Calculate Total Due and Total Paid from Participants (for logging)
       let totalPaidByInvestors = 0;
-
-      const totalDueInstallment = participants.reduce((sum, participant) => {
-        const paid = participant.installmentPaidAmount || 0;
-        totalPaidByInvestors += paid; // Sum up what has actually been paid
-        const due = (participant.amount || 0) - paid;
-        return sum + (due > 0 ? due : 0);
-      }, 0);
+      participants.forEach((participant) => {
+        totalPaidByInvestors += participant.installmentPaidAmount || 0;
+      });
 
       const saleAmount = Number(payload.saleAmount.toFixed(2));
       const projectAmount = Number((investment.projectAmount || 0).toFixed(2));
 
-      // 3. Calculate Gross Profit based on Deduct Outstanding Logic
-      // Check payload for flag, default to TRUE (standard behavior) if undefined
-      const deductOutstanding = (payload as any).deductOutstanding !== false; 
-      let grossProfit = 0;
+      // ---------------------------------------------------------
+      // STEP 1 & 2: Sale - Project = Gross Profit
+      // ---------------------------------------------------------
+      const grossProfit = Number((saleAmount - projectAmount).toFixed(2));
 
-      if (deductOutstanding) {
-        // Scenario A: Deduct Outstanding Amount
-        // Math: (Sale - Outstanding) - Paid  === Sale - (Outstanding + Paid) === Sale - ProjectAmount
-        grossProfit = Number((saleAmount - projectAmount).toFixed(2));
-      } else {
-        // Scenario B: Ignore Outstanding (Profit based on actual cash in)
-        // Math: Sale - Paid
-        grossProfit = Number((saleAmount - totalPaidByInvestors).toFixed(2));
-      }
-
-      // 4. Admin Cost Calculation
+      // ---------------------------------------------------------
+      // STEP 3: Gross - Admin = Net Profit
+      // ---------------------------------------------------------
       const adminCostRate = investment.adminCost || 0;
       const adminCost = Number(
         (grossProfit * ((adminCostRate as any) / 100)).toFixed(2)
       );
       
-      // 5. Calculate distributable amount BEFORE agent commissions (for share calculation)
-      const profitBeforeCommission = Number((grossProfit - adminCost).toFixed(2));
-const netProfit = Number((grossProfit - adminCost).toFixed(2));
+      const netProfit = Number((grossProfit - adminCost).toFixed(2));
+      
       const currentMonth = moment().format("YYYY-MM");
       const now = new Date();
+      // Ensure currencyType is available
+      const currencyType = investment.currencyType || 'GBP';
 
-      // --- LOGGING (Project Level) ---
+      // --- LOGGING: Global Transaction (CMV, Gross, Admin) ---
       const cmvLog = {
         type: "saleDeclared",
         message: `CMV / SALE`,
@@ -679,7 +668,6 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
           amount: saleAmount, 
           projectAmount: projectAmount,
           totalPaidByInvestors: totalPaidByInvestors,
-          deductOutstanding: deductOutstanding
         },
         createdAt: new Date(now.getTime() + 1),
       };
@@ -707,12 +695,6 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
-      if (!globalTransaction) {
-        throw new AppError(
-          httpStatus.INTERNAL_SERVER_ERROR,
-          "Global transaction not found after saving CMV log"
-        );
-      }
       const savedCmvLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
       const grossProfitLog = {
@@ -723,7 +705,6 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
           saleAmount: saleAmount, 
           projectAmount: projectAmount,
           totalPaidByInvestors: totalPaidByInvestors,
-          calculationMethod: deductOutstanding ? 'sale_minus_project_amount' : 'sale_minus_paid_amount',
           refId: savedCmvLog._id 
         },
         createdAt: new Date(now.getTime() + 2),
@@ -732,12 +713,6 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
-      if (!globalTransaction) {
-        throw new AppError(
-          httpStatus.INTERNAL_SERVER_ERROR,
-          "Global transaction not found after saving gross profit log"
-        );
-      }
       const savedGrossProfitLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
       const adminCostLog = {
@@ -750,26 +725,22 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
       await globalTransaction.save({ session });
 
       globalTransaction = await Transaction.findById(globalTransaction._id).session(session);
-      if (!globalTransaction) {
-        throw new AppError(
-          httpStatus.INTERNAL_SERVER_ERROR,
-          "Global transaction not found after saving admin cost log"
-        );
-      }
       const savedAdminCostLog = globalTransaction.logs[globalTransaction.logs.length - 1];
 
-     // --- Process Participants ---
+      // ---------------------------------------------------------
+      // STEP 4, 5, 6: Distribute to Investors
+      // ---------------------------------------------------------
       const participantUpdates = [];
       const investorTxnPromises = [];
       const agentTxnPromises = [];
-      let totalAgentCommissions = 0; // Just for tracking/logging purposes
+      let totalAgentCommissions = 0; 
 
       for (const participant of participants) {
-        // 1. Calculate Payment Ratio
+        // 4. Calculate Investor Share from Net Profit
         const baseSharePercent = participant.projectShare || 0;
         const effectiveSharePercent = Number((baseSharePercent).toFixed(2));
         
-        // 2. Calculate Gross Investor Share (from the full Net Profit)
+        // The "Raw" share the investor is entitled to before agent cuts
         const rawInvestorShareAmount = Number(((netProfit * effectiveSharePercent) / 100).toFixed(2));
 
         const investor = await User.findById(participant.investorId).session(session).lean();
@@ -780,23 +751,23 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
         let agentDoc = null;
         let commissionLog = null;
 
-        // 3. Calculate Agent Commission (Split from Investor Share)
+        // 5. Deduct Agent Commission from Investor Share
         if (investor?.agent && participant.agentCommissionRate > 0 && rawInvestorShareAmount > 0) {
           const agent = await User.findById(investor.agent).session(session).lean();
           if (agent) {
             agentDoc = agent;
             const agentCommissionRate = participant.agentCommissionRate;
             
-            // Calculate Commission
+            // Calculate Commission based on the INVESTOR'S SHARE
             agentCommission = Number((rawInvestorShareAmount * (agentCommissionRate / 100)).toFixed(2));
             
-            // Add to total (for reference only, not for deduction from netProfit)
+            // Track total for final log
             totalAgentCommissions += agentCommission;
             
-            // DEDUCT Commission from Investor's Raw Share
+            // DEDUCT: Final Amount = Share - Commission
             finalInvestorProfit = Number((rawInvestorShareAmount - agentCommission).toFixed(2));
 
-            // Create Commission Log Object
+            // Create Commission Log
             commissionLog = {
                 type: "commissionCalculated",
                 message: `Agent ${agentDoc.name} Commission from ${investorName}'s profit`,
@@ -817,7 +788,7 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
           }
         }
 
-        // 4. Update Due Amount with the Final Profit
+        // 6. Add final amount to investor due
         participant.totalDue = Number((participant.totalDue + finalInvestorProfit).toFixed(2));
 
         const investmentMonth = moment(participant.createdAt).format("YYYY-MM");
@@ -831,16 +802,16 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
         }
         participantUpdates.push(participant.save({ session }));
 
-        // 5. Create Profit Log Object
+        // --- Investor Transaction Logging ---
         const shareMessage = `${effectiveSharePercent}% share`;
         const profitLog = {
           type: "profitDistributed",
           message: `${investorName} Profit for ${shareMessage}`,
           metadata: {
-            baseNetProfit: netProfit, // Total Pot
-            amount: finalInvestorProfit, // What Investor Gets
-            rawShare: rawInvestorShareAmount, // Share before agent cut
-            agentDeduction: agentCommission, // Agent Cut
+            baseNetProfit: netProfit,
+            amount: finalInvestorProfit, // What they actually get
+            rawShare: rawInvestorShareAmount, // Share before deduction
+            agentDeduction: agentCommission, // What was taken
             sharePercentage: effectiveSharePercent,
             investorName,
             currencyType
@@ -848,7 +819,6 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
           createdAt: new Date(new Date().getTime() + 1),
         };
 
-        // 6. Handle Investor Transaction
         let investorTxn = await Transaction.findOne({
           investmentId: id,
           investorId: participant.investorId,
@@ -868,20 +838,18 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
           });
         }
 
-        // Push Commission Log FIRST, then Profit Log
         if (commissionLog) {
             investorTxn.logs.push(commissionLog);
         }
         investorTxn.logs.push(profitLog);
 
-        // Update Totals
         investorTxn.profit = Number((investorTxn.profit + finalInvestorProfit).toFixed(2));
         investorTxn.monthlyTotalDue = Number((investorTxn.monthlyTotalDue + finalInvestorProfit).toFixed(2));
         investorTxn.status = "partial";
         
         investorTxnPromises.push(investorTxn.save({ session }));
 
-        // 7. Handle Agent Transaction & Summary
+        // --- Agent Transaction Logging ---
         if (agentDoc && agentCommission > 0 && commissionLog) {
           let agentTxn = await AgentTransaction.findOne({
             investmentId: id,
@@ -933,26 +901,18 @@ const netProfit = Number((grossProfit - adminCost).toFixed(2));
         }
       }
 
-      // --- LOG GLOBAL NET PROFIT ---
-      // FIX: Use 'netProfit' (Gross - Admin). Do NOT subtract agent commissions from this global number.
+      // --- LOG GLOBAL NET PROFIT (Kept at the end as requested) ---
       const netProfitLog = {
         type: "netProfit",
         message: `Net Profit for ${investment.title}`,
         metadata: { 
-          amount: netProfit, // This is the full pie
-          totalAgentCommissions, // Just for info
+          amount: netProfit, 
+          totalAgentCommissions, 
           refId: savedAdminCostLog._id, 
           currencyType 
         },
         createdAt: new Date(now.getTime() + 4),
       };
-      
-      if (!globalTransaction) {
-        throw new AppError(
-          httpStatus.INTERNAL_SERVER_ERROR,
-          "Global transaction not found when adding net profit log"
-        );
-      }
       
       globalTransaction.logs.push(netProfitLog);
       await globalTransaction.save({ session });
@@ -1028,97 +988,99 @@ const addInstallment = async (payload: {
   }
 
   const session = await mongoose.startSession();
+  session.startTransaction();
 
   try {
-    session.startTransaction();
-
-    // 1. Fetch the Participant
+    // 1. Fetch Participant AND Investment details
     const participant = await InvestmentParticipant.findOne({
       _id: participantId,
       investmentId: investmentId,
-    }).populate('investorId').session(session);
+    })
+      .populate('investorId')
+      .populate('investmentId') 
+      .session(session);
 
     if (!participant) {
       throw new AppError(httpStatus.NOT_FOUND, "Investment Participant not found");
     }
 
-    // 2. VALIDATION: Check if amount exceeds the Total Investment Amount
-    // We check if (Current Paid + New Amount) > Total Committed Amount
-    const currentPaid = participant.installmentPaidAmount || 0;
-    const committedAmount = participant.amount;
+    // Cast investmentId to the Investment interface (or any) to access fields
+    const investment = participant.investmentId as any;
 
-    if (currentPaid + amount > committedAmount) {
-      const remaining = committedAmount - currentPaid;
+    // 2. VALIDATION: Calculate Total Due based on Project Outstanding Balance & Share
+    // Formula: (Project Amount - Total Project Paid) * (Share / 100)
+    const projectAmount = investment.projectAmount || 0;
+    const projectTotalPaid = investment.totalAmountPaid || 0;
+    const participantShare = participant.projectShare || 0;
+
+    // Calculate the remaining amount this specific user is allowed to pay
+    const maxAllowedAmount = (projectAmount - projectTotalPaid) * (participantShare / 100);
+
+    const roundedAmount = Math.round(amount * 100) / 100;
+    const roundedMax = Math.round(maxAllowedAmount * 100) / 100;
+
+    if (roundedAmount > roundedMax) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Payment exceeds investment amount. Remaining balance is ${remaining}`
+        `Payment exceeds outstanding balance. Maximum you can pay is ${roundedMax.toFixed(2)}`
       );
     }
 
     // 3. Update Investment Participant
-    // Increment installmentNumber and installmentPaidAmount
-    // We also update totalPaid as it usually reflects the sum of installments
     const updatedParticipant = await InvestmentParticipant.findByIdAndUpdate(
       participantId,
       {
         $inc: {
-          installmentNumber: 1,
-          installmentPaidAmount: amount,
-          totalPaid: amount, 
+          installmentNumber: 1, // Increment count
+          installmentPaidAmount: amount, // Track how much they paid specifically for installments
+          totalPaid: amount, // Increment their total contribution
         },
         $set: {
-            amountLastUpdatedAt: new Date()
-        }
+          amountLastUpdatedAt: new Date(),
+        },
       },
       { new: true, session }
     );
 
-    // 4. Update Investment Model
-    // Increment totalAmountPaid
-    const updatedInvestment = await Investment.findByIdAndUpdate(
-      investmentId,
-      {
-        $inc: { totalAmountPaid: amount },
-      },
-      { new: true, session }
+    // 4. Update PARENT Investment (CRITICAL: Update global totalAmountPaid so future calcs are correct)
+    await Investment.findByIdAndUpdate(
+        investmentId,
+        { 
+            $inc: { totalAmountPaid: amount } 
+        },
+        { session }
     );
 
-    if (!updatedInvestment) {
-      throw new AppError(httpStatus.NOT_FOUND, "Investment project not found");
-    }
-
-   
+    // 5. Update Transaction Log
     const currentDate = new Date();
-    const currentMonth = currentDate.toLocaleString('default', { month: 'short', year: 'numeric' }); 
+    const currentMonth = currentDate.toLocaleString('default', { month: 'short', year: 'numeric' });
+    const currency = investment.currencyType || 'GBP';
 
     await Transaction.findOneAndUpdate(
       {
-        investorId: participant.investorId,
+        investorId: (participant.investorId as any)._id,
         investmentId: investmentId,
         month: currentMonth,
       },
       {
-        $inc: { 
-            monthlyTotalPaid: amount 
+        $inc: {
+          monthlyTotalPaid: amount,
         },
         $setOnInsert: {
-             profit: 0, // Required by schema, strict init to 0
-             status: "paid"
+          profit: 0,
+          status: "paid",
         },
         $push: {
-         
           logs: {
-            type: "installment", 
-            message: `${(participant as any)?.investorId?.name}'s Installment of ${amount} ${updatedInvestment.currencyType || 'GBP'} received`,
+            type: "installment",
+            message: `${(participant.investorId as any)?.name}'s Installment of ${amount} ${currency} received`,
             metadata: {
               amount: amount,
-              previousPaid: currentPaid,
-              newTotalPaid: currentPaid + amount
+              previousPaid: participant.installmentPaidAmount || 0,
+              newTotalPaid: (participant.installmentPaidAmount || 0) + amount,
             },
             createdAt: new Date(),
           },
-          
-         
         },
       },
       { upsert: true, new: true, session }
@@ -1129,9 +1091,7 @@ const addInstallment = async (payload: {
 
     return {
       participant: updatedParticipant,
-      investment: updatedInvestment,
     };
-
   } catch (error) {
     await session.abortTransaction();
     session.endSession();

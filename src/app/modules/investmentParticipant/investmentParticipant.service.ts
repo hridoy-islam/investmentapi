@@ -15,25 +15,27 @@ import { currency } from "../types/currency";
 const createInvestmentParticipantIntoDB = async (
   payload: TInvestmentParticipant,
 ) => {
+  const session = await mongoose.startSession();
+
   try {
+    session.startTransaction();
+
     const { investorId, investmentId, amount, agentCommissionRate } = payload;
 
     if (!investorId || !investmentId || !amount) {
       throw new AppError(httpStatus.BAD_REQUEST, "Missing required fields");
     }
 
-    // ✅ Get the investment/project
-    const investment = await Investment.findById(investmentId);
+    const investment = await Investment.findById(investmentId).session(session);
     if (!investment) {
       throw new AppError(httpStatus.NOT_FOUND, "Investment not found");
     }
 
-    const investor = await User.findById(investorId);
+    const investor = await User.findById(investorId).session(session);
     if (!investor) {
       throw new AppError(httpStatus.NOT_FOUND, "Investor not found");
     }
 
-    // ✅ Calculate total invested so far in this project
     const aggregation = await InvestmentParticipant.aggregate([
       {
         $match: {
@@ -46,17 +48,18 @@ const createInvestmentParticipantIntoDB = async (
           totalInvested: { $sum: "$amount" },
         },
       },
-    ]);
+    ]).session(session);
 
     const totalInvestedSoFar = aggregation[0]?.totalInvested || 0;
-    const remainingAmount =
-      Number(investment.projectAmount) - totalInvestedSoFar;
+    // Ensure we handle potential string/number mismatch for projectAmount
+    const projectCap = Number(investment.projectAmount);
+    const remainingAmount = projectCap - totalInvestedSoFar;
 
     // ✅ Guard: Prevent over-investment
     if (amount > remainingAmount) {
       throw new AppError(
         httpStatus.BAD_REQUEST,
-        `Only amount ${remainingAmount} left to invest in this project`,
+        `Investment failed. Only ${remainingAmount} remains. You are trying to invest ${amount}.`,
       );
     }
 
@@ -64,55 +67,81 @@ const createInvestmentParticipantIntoDB = async (
     let participant = await InvestmentParticipant.findOne({
       investorId,
       investmentId,
-    });
+    }).session(session);
 
     if (!participant) {
-      // Create new participant
-      participant = await InvestmentParticipant.create({
-        ...payload,
-        totalDue: amount,
-        totalPaid: 0,
-        agentCommissionRate,
-        status: "active",
-      });
+      // 🟢 Create new participant (Pass session array)
+      const newParticipants = await InvestmentParticipant.create(
+        [
+          {
+            ...payload,
+            totalDue: amount,
+            totalPaid: 0,
+            agentCommissionRate,
+            status: "active",
+          },
+        ],
+        { session },
+      );
+      participant = newParticipants[0];
 
       const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
 
-      await Transaction.create({
-        month: currentMonth,
-        investorId,
-        investmentId,
-        profit: 0,
-        monthlyTotalDue: 0,
-        monthlyTotalPaid: 0,
-        status: "due",
-        paymentLog: [
+      // Create Transaction Log
+      await Transaction.create(
+        [
           {
-            transactionType: "investment",
-            dueAmount: amount,
-            paidAmount: 0,
+            month: currentMonth,
+            investorId,
+            investmentId,
+            profit: 0,
+            monthlyTotalDue: 0,
+            monthlyTotalPaid: 0,
             status: "due",
-            note: `${investor.name} as investor has been added`,
-            metadata: {
-              investorId,
-              investmentId,
-              investorName: investor.name,
-              investmenName: investment.title,
-              amount,
-            },
+            paymentLog: [
+              {
+                transactionType: "investment",
+                dueAmount: amount,
+                paidAmount: 0,
+                status: "due",
+                note: `${investor.name} as investor has been added`,
+                metadata: {
+                  investorId,
+                  investmentId,
+                  investorName: investor.name,
+                  investmentName: investment.title,
+                  amount,
+                },
+              },
+            ],
           },
         ],
-      });
+        { session },
+      );
     } else {
-      // Updating an existing participant
+      // 🟡 Update existing participant
       participant.amount += amount;
       participant.totalDue += amount;
-      await participant.save();
+      await participant.save({ session });
     }
+
+    await Investment.findByIdAndUpdate(
+      investmentId,
+      {
+        $inc: { totalAmountPaid: amount }, // Increment by the new amount invested
+      },
+      { new: true, session },
+    );
+
+    await session.commitTransaction();
+    session.endSession();
 
     return participant;
   } catch (error: any) {
-    console.error("Error in createOrUpdateInvestmentParticipant:", error);
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error("Error in createInvestmentParticipantIntoDB:", error);
 
     if (error instanceof AppError) {
       throw error;
@@ -131,7 +160,7 @@ const getAllInvestmentParticipantFromDB = async (
   const InvestmentParticipantQuery = new QueryBuilder(
     InvestmentParticipant.find()
       .populate("investorId")
-      .populate("investmentId"), // Ensure this populates the full Investment document
+      .populate("investmentId"),
     query,
   )
     .search(InvestmentParticipantSearchableFields)
@@ -146,24 +175,28 @@ const getAllInvestmentParticipantFromDB = async (
   const updates: Promise<any>[] = [];
 
   for (const participant of result) {
-    // 1. Check if share needs updating
-    if (!participant.projectShare || participant.projectShare === 0) {
-      // 2. SAFETY CHECK: Ensure we actually have the data needed to calculate
-      // (participant.investmentId might not be populated if specific fields were requested)
-      const investment = participant.investmentId as any;
+    const investment = participant.investmentId as any;
 
-      if (
-        investment &&
-        typeof investment.projectAmount === "number" &&
-        investment.projectAmount > 0 &&
-        typeof participant.amount === "number" &&
-        participant.amount > 0
-      ) {
-        // 3. Calculate share based on CURRENT valuation (This becomes the "locked" value)
-        const calculatedShare = Number(
-          ((participant.amount / investment.projectAmount) * 100).toFixed(2),
+    if (
+      investment &&
+      typeof participant.amount === "number" &&
+      participant.amount > 0
+    ) {
+      const totalPaid = Number(investment.totalAmountPaid) || 0;
+      const participantAmount = Number(participant.amount) || 0;
+
+      let calculatedShare = 0;
+
+      if (totalPaid === 0) {
+        calculatedShare = 100;
+      } else {
+        calculatedShare = Number(
+          ((participantAmount * 100) / totalPaid).toFixed(2),
         );
+      }
 
+      // Only update if value changed (optional optimization)
+      if (participant.projectShare !== calculatedShare) {
         participant.projectShare = calculatedShare;
 
         updates.push(
@@ -177,11 +210,9 @@ const getAllInvestmentParticipantFromDB = async (
     }
   }
 
-  // Execute all DB updates in parallel
   if (updates.length > 0) {
     await Promise.all(updates);
   }
-  // ---------------------------------------------------------------
 
   return {
     meta,
@@ -421,7 +452,7 @@ export const updateInvestmentParticipantIntoDB = async (
 
   // Update amounts if payload includes an increment
   if (hasAmount) {
-    // Add the increment to existing amount
+    // 1️⃣ Update this participant amount
     investmentParticipant.amount =
       Math.round((investmentParticipant.amount + payload.amount!) * 100) / 100;
 
@@ -429,11 +460,36 @@ export const updateInvestmentParticipantIntoDB = async (
       Math.round((investmentParticipant.totalDue + payload.amount!) * 100) /
       100;
 
-    if (projectAmount > 0) {
-      investmentParticipant.projectShare = parseFloat(
-        ((investmentParticipant.amount / projectAmount) * 100).toFixed(2),
-      );
-    }
+    await investmentParticipant.save();
+
+    // 2️⃣ Get all participants of this investment
+    const participants = await InvestmentParticipant.find({
+      investmentId: investment._id,
+    });
+
+    // 3️⃣ Recalculate total paid dynamically
+    const newTotalPaid = participants.reduce(
+      (sum, p) => sum + (p.amount || 0),
+      0,
+    );
+
+    // 4️⃣ Update investment totalAmountPaid
+    investment.totalAmountPaid = newTotalPaid;
+    await investment.save();
+
+    // 5️⃣ Recalculate share for ALL participants
+    const shareUpdates = participants.map((p) => {
+      const newShare =
+        newTotalPaid > 0
+          ? parseFloat(((p.amount / newTotalPaid) * 100).toFixed(2))
+          : 0;
+
+      return InvestmentParticipant.findByIdAndUpdate(p._id, {
+        projectShare: newShare,
+      });
+    });
+
+    await Promise.all(shareUpdates);
   }
 
   // Apply non-amount fields from payload
@@ -463,7 +519,7 @@ export const updateInvestmentParticipantIntoDB = async (
         dueAmount: 0,
         paidAmount: 0,
         status: "partial",
-        note: `${investorName} made an additional investment in the project. New Share: ${investmentParticipant.projectShare}%`,
+        note: `${investorName} made an additional investment in the project.`,
         metadata: {
           amount: payload.amount,
           newShare: investmentParticipant.projectShare,
